@@ -1,196 +1,62 @@
-from os import dup
+#from os import dup
 import sys
+import os
+#from PyQt5.QtGui import QBrush, QColor
+#from PyQt5.QtCore import pyqtSignal
 #from PyQt5.QtGui import QIcon
-from PyQt5 import QtWidgets
+#from PyQt5 import QtWidgets
 from pyqtgraph.Qt import QtCore, QtGui, QtWidgets
 import pyqtgraph as pg
 import numpy as np
-from pyqtgraph.functions import mkPen
+#from pyqtgraph.functions import mkPen
 
-from scipy.io.wavfile import read 
 
+import wave
+from  itertools import cycle
+from scipy import interpolate
 #icons obtained from Freepik.com
 
-class SelectedTrials(object):
-
-    #this class will contain all the information about the repetitions, including coordinates in time, viewBox, color of signal, values, ...
-
-    def __init__(self, parent=None):
-        super().__init__()
-      
-        self.plotlines= []
-        self.isHidden = []
-        self.color = []
-        self.values = dict()
-        self.index_repetition = []
-        self.name_repetition = []
-
-    def clear_all(self):
-        #clear everything to prepare for new data 
-
-        self.plotlines.clear()
-        self.isHidden.clear()
-        self.color.clear()
-        self.values.clear()
-        self.index_repetition.clear()
-        self.name_repetition.clear()
+from audio_class import audioStream
+from graph_class import MyPlotWidget, SelectedRepetitions
 
 
-#this class re-implements pg.LinearRegionItem
-#I re-implement it so that the is a signal every time there is a double click on the region
-#in this way, we can identify if the subject double click on the region and we can remove the region of interest
-class MyLinearRegionItem(pg.LinearRegionItem):
-    #create the signal to emit
-    sigDoubleClick = QtCore.Signal(object)
-
-    def mousePressEvent(self, ev):
-        super().mousePressEvent(ev)
-        
-    def mouseMoveEvent(self, ev):
-        #needed for the function to work properly 
-        super().mouseMoveEvent(ev)
-        return
-        
-    def mouseReleaseEvent(self, ev):
-        #needed for the function to work properly 
-        super().mouseReleaseEvent(ev)
-        return
-
-    def mouseDoubleClickEvent(self, ev):
-        super().mouseDoubleClickEvent(ev)
-        if ev.button() == QtCore.Qt.LeftButton:
-            #if there is a double click emit this signal
-            self.sigDoubleClick.emit(self)
-
-
-class MyPlotWidget(pg.PlotWidget):
-
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-
-        # self.scene() is a pyqtgraph.GraphicsScene.GraphicsScene.GraphicsScene
-        # self.scene().sigMouseClicked.connect(self.mouse_clicked)    
-        self.setBackground('w')
-        self.plotItem.setMouseEnabled(y=False)
-
-        self.filled_areas = []
-        self.texts = []
-        # self.lines  = []
-        # self.index_lines = []
-        self.num_clicks = 0  # a click counter
-        self.total_repetition = 0 
-        #self.selectedTrials = SelectedTrials()
-        self.isDataAvaliable = False
-        
-        #generic infinite line
-        self.line = pg.InfiniteLine( pen=pg.mkPen('r', width=1), movable = True)
-        self.line.setHoverPen(color=(58,59,60))
-        #self.line.sigPositionChangeFinished.connect(self.changeLinePosition)
-
-        self.height = 0
-
-    def get_ybound_viewBox(self):
-        #function that gets the y-size of the rectangle that will be used to delimit the selected area
-        if self.isDataAvaliable:
-            y_min = self.plotItem.getViewBox().state['viewRange'][1][0]
-            y_max = self.plotItem.getViewBox().state['viewRange'][1][1]
-            self.height = y_max - y_min
-
-        
-    def mousePressEvent(self, ev):
-        super().mousePressEvent(ev)
-
-        if self.isDataAvaliable:
-            #get the x position of the mouse in view coordinates
-            scenePos = self.plotItem.vb.mapDeviceToView(QtCore.QPointF(ev.pos()))#self.mapToScene(event.pos())
-            x_mousePos = scenePos.x()
-
-            modifiers = QtWidgets.QApplication.keyboardModifiers()
-            if modifiers == QtCore.Qt.ControlModifier: #if the user is pressing Ctrl
-
-                if self.num_clicks == 0 : # no selected area
-
-                    #set the position of the line as the current mouse position
-                    self.line.setPos(x_mousePos)
-                    #put the line in the picture
-                    self.addItem(self.line)
-                    
-                    #count the number of clicks
-                    self.num_clicks += 1
-
-
-                elif self.num_clicks == 1: # the user finized selecting the area 
-                    #if there is a second click with Ctrl pressed then create a repetition, 
-   
-                    #remove the line, it will be replaced by a filled area
-                    self.removeItem(self.line)
-                    
-                    #plot a filled area between the line and click position 
-                    coords_0 = self.line.getXPos()
-                    coords_1 = x_mousePos
-
-                    #filled area
-                    fill = MyLinearRegionItem([coords_0, coords_1], movable=False, pen=QtGui.QColor(255,0,255), brush = QtGui.QColor(0,0,255,25), hoverPen=QtGui.QColor(58,59,60), swapMode='block')
-                    fill.setMovable(True)
-                    fill.sigDoubleClick.connect(self.DoubleClickonRegion)
-                    fill.sigRegionChanged.connect(self.changeRegionPosition)
-                    
-                    #text 
-                    text = pg.TextItem(text="",color=(0, 0, 0), anchor=(0.5,0.5))
-                    text.setPos((coords_0+coords_1)/2, (self.height/2)*0.8)
-                    text.setText('Rep_'+str(self.total_repetition))
-                    
-                    #store the filled area and text to be able to modify them later
-                    self.filled_areas.append(fill)
-                    self.texts.append(text)
-
-                    #add the elements to the picture
-                    self.addItem(self.filled_areas[-1])
-                    self.addItem(self.texts[-1])
-
-                    #two clicks already, so reset the click counter
-                    self.num_clicks = 0 
-
-                    #count the repetitions
-                    self.total_repetition +=1
-
-
-    def mouseMoveEvent(self, ev):
-        #needed for the function to work properly 
-        super().mouseMoveEvent(ev)
-        return
-        
-    def mouseReleaseEvent(self, ev):
-        #needed for the function to work properly 
-        super().mouseReleaseEvent(ev)
-        return
-
-    def changeRegionPosition(self):
-        #the region limits were updated, update the position of the text
-        idx_rep = self.filled_areas.index(self.sender()) #this is the repetition number associated with the filled area 
-
-        coords_0, coords_1 = self.sender().getRegion()
-        self.texts[idx_rep].setPos((coords_0+coords_1)/2, (self.height/2)*0.8)
-
-
-    def DoubleClickonRegion(self):
-        idx_rep = self.filled_areas.index(self.sender()) #this is the repetition number associated with the filled area 
-
-        #These are the lines associated with the filled area 
-
-        #remove elements from list and from graphic 
-        self.removeItem(self.filled_areas[idx_rep])
-        self.removeItem(self.texts[idx_rep])
-
-        self.filled_areas.pop(idx_rep)
-        self.texts.pop(idx_rep)
 
 # my application
 class AppWindow(QtWidgets.QMainWindow):
     def __init__(self):
         super(AppWindow, self).__init__()
 
+                
+        #colors
+        self.kelly_colors = cycle(['#222222', '#F3C300', '#875692', '#F38400', '#A1CAF1', '#BE0032', '#C2B280', '#848482', '#008856', '#E68FAC', '#0067A5', '#F99379', '#604E97', '#F6A600', '#B3446C', '#DCD300', '#882D17', '#8DB600', '#654522', '#E25822', '#2B3D26'])
+        self.InfoRepetitions = SelectedRepetitions()
+
+        #data
+        self.x = None #empty variable for x
+        self.y = None #empty variable for y
+        self.repetitions = dict()
+
+        self.audio_file = None #this object will handle playback 
+        self.file_name = None #file name
+        
+        self.thread = QtCore.QThread()  # no parent!
+        self.audioObj = audioStream()  # no parent!
+        self.audioObj.moveToThread(self.thread)
+        self.thread.started.connect(self.audioObj.run)
+        self.audioObj.PositioninStream.connect(self.updateSliderPosition)
+        self.audioObj.finished.connect(self.ResetAudioPlayBack)
+
+        self.UIComponents()
+
+    def UIComponents(self):
+
+        widget = QtWidgets.QWidget()
+        
+        #components
         self.pl1 = MyPlotWidget()
+        #self.pl1.ControlLine.sigPositionChangeFinished.connect(self.ControlAudioPlayBack)
+        self.pl1.mouseDoubleClick.connect(self.mouseDoubleClick)
+        
 
         self.pl2 = MyPlotWidget()
         self.pl2.setXLink(self.pl1)
@@ -200,9 +66,10 @@ class AppWindow(QtWidgets.QMainWindow):
         self.pl3.setBackground('w')
         self.pl3.plotItem.setMouseEnabled(y=False)
 
-        self.buttonload = QtWidgets.QPushButton('Load File')
+        self.buttonload = QtWidgets.QPushButton('Load &File')
         self.buttonload.pressed.connect(self.plot)
         self.buttonload.setMaximumWidth(150)
+        self.buttonload.setShortcut("Ctrl+F")
         self.buttonSTI = QtWidgets.QPushButton('Compute STI')
         self.buttonSTI.pressed.connect(self.computeSTI)
         self.buttonSTI.setMaximumWidth(150)
@@ -220,19 +87,42 @@ class AppWindow(QtWidgets.QMainWindow):
         self.buttonSecondDerivative.setMaximumWidth(150)
 
 
+        self.buttonPlay = QtWidgets.QPushButton('')
+        self.buttonPlay.setIcon(QtGui.QIcon("play.png"))
+        self.buttonPlay.setIconSize(QtCore.QSize(24,24))
+        self.buttonPlay.setMaximumWidth(50)
+        self.buttonPlay.setEnabled(False)
+        self.buttonPlay.pressed.connect(self.playAudio)
+        self.buttonPlay.setShortcut("Ctrl+A")
+
+        self.buttonPause = QtWidgets.QPushButton('')
+        self.buttonPause.setIcon(QtGui.QIcon("pause.png"))
+        self.buttonPause.setIconSize(QtCore.QSize(24,24))
+        self.buttonPause.setMaximumWidth(50)
+        self.buttonPause.setEnabled(False)
+        self.buttonPause.pressed.connect(self.stopAudio)
+        self.buttonPause.setShortcut("Ctrl+D")
+
+        self.playBackSpeed = QtWidgets.QComboBox()
+        self.playBackSpeed.addItems(["x1.00", "x0.75", "x0.50", "x0.25", "x0.10"])
+        self.playBackSpeed.currentIndexChanged.connect(self.playBackSpeedChange)
+
 
         self.buttonHide = QtWidgets.QPushButton('')
         self.buttonHide.setIcon(QtGui.QIcon("hide.png"))
         self.buttonHide.setIconSize(QtCore.QSize(24,24))
         self.buttonHide.setMaximumWidth(50)
+        self.buttonHide.pressed.connect(self._Hide)
         self.buttonEliminate= QtWidgets.QPushButton('')
         self.buttonEliminate.setIcon(QtGui.QIcon("dump.png"))
         self.buttonEliminate.setIconSize(QtCore.QSize(24,24))
         self.buttonEliminate.setMaximumWidth(50)
+        self.buttonEliminate.pressed.connect(self._Eliminate)
         self.buttonChangeColor = QtWidgets.QPushButton('')
         self.buttonChangeColor.setIcon(QtGui.QIcon("color-palette.png"))
         self.buttonChangeColor.setIconSize(QtCore.QSize(24,24))
         self.buttonChangeColor.setMaximumWidth(50)
+        self.buttonChangeColor.pressed.connect(self._ChangeColor)
 
 
         self.table = QtWidgets.QTableWidget(1,1)
@@ -246,20 +136,9 @@ class AppWindow(QtWidgets.QMainWindow):
         #print(self.table.columnWidth(0))
         #self.table.itemClicked.connect(self.selected_in_table)
         #self.table.itemSelectionChanged.connect(self.change_selected_in_table)
-        
-        
-        #data
-        self.x = None #empty variable for x
-        self.y = None #empty variable for y
-        self.repetitions = dict()
 
 
-        self.UIComponents()
-
-    def UIComponents(self):
-
-        widget = QtWidgets.QWidget()
-        
+        #layouts 
 
         layout = QtWidgets.QGridLayout()
 
@@ -279,8 +158,19 @@ class AppWindow(QtWidgets.QMainWindow):
         left_button_layout.addWidget(self.buttonSave)
         left_button_layout.addStretch()
 
+       
+
+        spaceItem = QtWidgets.QSpacerItem(100, 10, QtWidgets.QSizePolicy.Expanding)
+        center_button_layout = QtWidgets.QHBoxLayout()
+        center_button_layout.addSpacerItem(spaceItem)
+        center_button_layout.addWidget(self.playBackSpeed)
+        center_button_layout.addWidget(self.buttonPlay)
+        center_button_layout.addWidget(self.buttonPause)
+        center_button_layout.addSpacerItem(spaceItem)
+
         plot_layout = QtWidgets.QVBoxLayout()
         plot_layout.addWidget(self.pl1)
+        plot_layout.addLayout(center_button_layout)
         plot_layout.addWidget(self.pl2)
 
         right_button_layout=QtWidgets.QVBoxLayout()
@@ -304,7 +194,6 @@ class AppWindow(QtWidgets.QMainWindow):
         self.setCentralWidget(widget)
         self.resize(1000,600)
 
-
     def plot(self):
         self.pl1.clear()
         #self.pl1.selectedTrials.clear_all()  #clear everything in the class
@@ -313,51 +202,232 @@ class AppWindow(QtWidgets.QMainWindow):
         fname = QtWidgets.QFileDialog.getOpenFileName(self, 'Open file', ' ',"WAV files (*.WAV *.wav, *.m4a)")
 
         if fname[0]:
-            samplerate, data = read(fname[0])
-            length = data.shape[0] / samplerate
-            samplerate, data = read(fname[0])
-            length = data.shape[0] / samplerate
-            x = np.linspace(0., length, data.shape[0])
-            y = data[:,0]
+            self.file_name = fname[0]
+            # Read file to get buffer   
+            if fname[0][-4:] == '.wav':                                                                                            
+                self.audio_file = wave.open(fname[0])
+                samples = self.audio_file.getnframes()
+                samplerate = self.audio_file.getframerate()
+                audio = self.audio_file.readframes(samples)
+                self.audio_file.rewind() #return pointer to begining of file
+                # Convert buffer to float32 using NumPy                                                                                 
+                audio_as_np_int16 = np.frombuffer(audio, dtype=np.int16)
+                audio_as_np_float32 = audio_as_np_int16.astype(np.float32)
 
-            try:
-                self.x = x
-                self.y = y
-                self.pl1.plot(x,y, pen=pg.mkPen(width=1))
-                self.pl1.setYRange(np.min(y), np.max(y), padding=0.1)
-                self.pl1.setXRange(np.min(x), np.max(x), padding=0)
-                self.pl1.isDataAvaliable = True #a variable that tell the class that there is data
-                self.pl1.get_ybound_viewBox() # a function that computes the y-limits of the rectangle  used to delimit the selected area
-            except:
-                pass
+                # Normalise float32 array so that values are between -1.0 and +1.0                                                      
+                max_int16 = 2**15
+                audio_normalized = audio_as_np_float32 / max_int16
+                audio_normalized = audio_normalized.reshape(samples,-1)
+                data = np.mean(audio_normalized,axis=1)
+                x = np.linspace(0., samples/samplerate, samples)
+                y = data
+
+                try:
+                    self.x = x
+                    self.y = y
+                    self.pl1.plot(x,y, pen=pg.mkPen(width=1))
+                    self.pl1.setLimits(xMin=np.min(x), xMax=np.max(x), yMin=np.min(y), yMax=np.max(y))
+                    self.pl1.isDataAvaliable = True #a variable that tells the class that there is data
+                    self.pl1.get_ybound_viewBox() # a function that computes the y-limits of the rectangle  used to delimit the selected area
+                
+                    self.pl1.addInfinteControlLine()
+
+                    self.buttonPlay.setEnabled(True)
+                    self.buttonPause.setEnabled(True)
+                except:
+                    pass
+
+ 
+            if os.path.exists(fname[0][:-4]+'.Table'):
+                array = np.loadtxt(fname[0][:-4]+'.Table', dtype=object, skiprows=1)
+                for row in array:
+                    self.pl1.addFilledAreaandLabel(float(row[0]), float(row[2]), row[1])
+                    self.pl1.total_repetition +=1
+
+
+    @QtCore.pyqtSlot(float)
+    def updateSliderPosition(self, position):
+        #change position of slider controling audio playback 
+        if position<=0:position=0
+        if position>=self.audio_file.getnframes(): position=self.audio_file.getnframes()
+        self.pl1.ControlLine.setPos(position)
+
+    def playAudio(self):
+        #play audio 
+        
+        if  not self.thread.isRunning():
+            #if thread is not active then create the audio stream (PyAudio) and start thread 
+            self.audioObj.audio_file = self.audio_file
+            self.audioObj.setUpStream(float(self.playBackSpeed.currentText()[1:])) #set the playback speed 
+            self.audioObj.isPlay = True
+            position = int(self.pl1.ControlLine.getXPos()*self.audio_file.getframerate()) #- 1024
+            if position<=0:position=0
+            if position>=self.audio_file.getnframes(): position=self.audio_file.getnframes()
+            self.audioObj.audio_file.setpos(position) #set the position of the audio file
+            self.thread.start()
+        else:
+            #if thread is active only re-start stream 
+            position = int(self.pl1.ControlLine.getXPos()*self.audio_file.getframerate()) #- 1024
+            if position<=0:position=0
+            if position>=self.audio_file.getnframes(): position=self.audio_file.getnframes()
+            self.audioObj.audio_file.setpos(position)
+            self.audioObj.isPlay = True
+            self.thread.start()
+
+    def stopAudio(self):
+        self.audioObj.isPlay = False
+
+    def playBackSpeedChange(self, i):
+        #update the playback speed
+        self.isPlay = False
+        self.audioObj.updateStream(float(self.playBackSpeed.currentText()[1:])) 
+        self.playAudio()
+
+
+    def ResetAudioPlayBack(self):
+        #end of sound file 
+        #reset line to zero and terminate thread that plays sound
+        self.pl1.ControlLine.setPos(0)
+        self.audioObj.close()
+        self.thread.quit()
+        self.thread.wait()
+
+    @QtCore.pyqtSlot(float)
+    def mouseDoubleClick(self, position):
+        #change position of line that controls audio playback with double click 
+        modifiers = QtWidgets.QApplication.keyboardModifiers()
+        if modifiers == QtCore.Qt.ShiftModifier: #if the user is pressing Shift
+            pass
+        else:
+            if self.audio_file is not None:
+                self.isPlay = False
+                self.pl1.ControlLine.setPos(position)
+                self.playAudio()
+
 
     def computeSTI(self):
-
+        self.table.setRowCount(0)
         #verify that the is something to take 
         n = len(self.pl1.filled_areas)
         if n>0:
+            #get the information from the plot
             for index in range(n):
 
                 coords_0, coords_1 = self.pl1.filled_areas[index].getRegion()
                 name = self.pl1.texts[index].textItem.toPlainText()
                 self.table.insertRow(index)
-                self.table.setItem(index,0,QtWidgets.QTableWidgetItem(str(name)))
-                # idx_x = np.abs(np.subtract.outer(self.x, coords)).argmin(0)
-                # self.repetitions[name]  = self.y[idx_x[0]:idx_x[1]] #get the data witing the line 
-                # self.pl2.plot(self.y[idx_x[0]:idx_x[1]], pen=pg.mkPen(width=1))
-                # #print(self.pl1.selectedTrials.coordsScene[index]
-                # print(len(self.repetitions[name]))
+                item = QtWidgets.QTableWidgetItem(str(name))
+                color = next(self.kelly_colors)
+                item.setForeground(QtGui.QBrush(QtGui.QColor(color)))
+                self.table.setItem(index,0,item)
+
+                self.InfoRepetitions.label.append(str(name))
+                self.InfoRepetitions.isHidden.append(False)
+                self.InfoRepetitions.color.append(color)
+                self.InfoRepetitions.values[str(name)]=self.y[self.closest_value(self.x, coords_0):self.closest_value(self.x, coords_1)]
+                self.InfoRepetitions.time_vect[str(name)]=self.x[self.closest_value(self.x, coords_0):self.closest_value(self.x, coords_1)]
+                self.InfoRepetitions.len_rep.append(len(self.InfoRepetitions.values[str(name)]))
+
+            
+            #compute the time-space adjusted sequences 
+            min_val = np.min(self.InfoRepetitions.len_rep)
+            for label in self.InfoRepetitions.label:
+                sig = self.InfoRepetitions.values[label]
+                time_v = self.InfoRepetitions.time_vect[label]
+                new_sig, des_time = self.adjustAmplitudeandTime(sig, time_v-time_v[0], normalize=True,des_n=min_val)
+                self.InfoRepetitions.values_adjusted[label] = new_sig
+                self.InfoRepetitions.time_vect_adjusted[label] = des_time
+
+            self.plotSTI()
         else:
-            print('no')
-        #for limits in self.pl1.
+            pass
+
+    def plotSTI(self):
+        childItems= self.pl3.allChildItems() 
+        for item in childItems:
+            self.pl3.removeItem(item)
+
+        for label in self.InfoRepetitions.label:
+            idx = self.InfoRepetitions.label.index(label)
+            if not self.InfoRepetitions.isHidden[idx]:
+                y = self.InfoRepetitions.values_adjusted[label]
+                x = self.InfoRepetitions.time_vect_adjusted[label]
+                color = self.InfoRepetitions.color[idx]
+                self.pl3.plot(x[:,0],y[:,0], pen=pg.mkPen(color=QtGui.QColor(color),width=1))
+                self.pl3.setLimits(xMin=np.min(x), xMax=np.max(x), yMin=np.min(y), yMax=np.max(y))
 
     def Save(self):
+        n = len(self.pl1.filled_areas)
+        to_save = np.empty((n+1,3),dtype=object) #matrix that will contain the segmenets 
+        to_save[0,:] = np.array(['t_start', 'rep', 't_end']) #header in row zero
+        if n>0:
+            for index in range(n):
+
+                coords_0, coords_1 = self.pl1.filled_areas[index].getRegion()
+                name = self.pl1.texts[index].textItem.toPlainText()
+                to_save[index+1,0] = np.round(coords_0,4)
+                to_save[index+1,1] = name
+                to_save[index+1,2] = np.round(coords_1,4)
+
+            np.savetxt(self.file_name[:-4]+'.Table',to_save, fmt=('%s'), delimiter='\t')
+
+    def _Hide(self):
+        for item in self.table.selectedItems():
+            text = item.text()
+            #find item index in list 
+            idx = self.InfoRepetitions.label.index(text)
+            if self.InfoRepetitions.isHidden[idx] == False:
+                self.InfoRepetitions.isHidden[idx] = True
+            else:
+                self.InfoRepetitions.isHidden[idx] = False
+
+            self.plotSTI()
+
+    def _Eliminate(self):
+        pass
+
+    def _ChangeColor(self):
         pass
 
     @staticmethod
     def closest_value(x, value):
         idx = np.abs(x - value).argmin()
         return idx
+
+    @staticmethod
+    def adjustAmplitudeandTime(sig, time,normalize=True, des_n = None):
+        """
+        Takes a signal x of length n and return a new signal x_n of lenght des_n and with zero meand and unit standard deviation
+        
+        Interpolation is performed using cubic splines
+        """
+        sig = sig[:,None]
+        time = time [:,None]
+        
+        if des_n is None:
+            des_time = time
+        else:
+            des_time = np.linspace(time[0],time[-1],des_n)
+    
+        if normalize:
+            sig = (sig-np.mean(sig))/np.std(sig)
+        try:
+            tck = interpolate.splrep(time, sig, s=0)
+        except:
+            tck = interpolate.splrep(np.sort(time,axis=None), sig, s=0)
+        
+        new_sig = interpolate.splev(des_time, tck, der=0)
+        
+        #new_sig_der = interpolate.splev(des_time, tck, der=1)
+        
+        return new_sig, des_time#, new_sig_der 
+
+    def closeEvent(self, *args, **kwargs):
+        super(QtWidgets.QMainWindow, self).closeEvent(*args, **kwargs)
+        if self.audioObj.stream is not None:
+            self.audioObj.close()
+        #self.thread.quit()
+        #self.thread.wait()
 
 
 
